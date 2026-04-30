@@ -1,19 +1,18 @@
 import json
 import asyncio
-from telegram import Update
+from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 # =========================
-# ONLY CHANGE THESE 3 VALUES
+# ONLY EDIT THESE
 # =========================
 BOT_TOKEN = "8605481890:AAFNrSwTodMBnUabi3LfxjjziNZBCemyZUQ"
 ADMIN_ID = 1416457995
-CHANNEL_ID = "https://t.me/kingtheseller"
 
 DATA_FILE = "data.json"
 
 # =========================
-# DATA HANDLING
+# LOAD / SAVE DATA
 # =========================
 def load_data():
     try:
@@ -29,12 +28,16 @@ def save_data(data):
 data = load_data()
 
 # =========================
-# AUTO SAVE GROUPS
+# AUTO TRACK GROUPS + USERS
 # =========================
 async def track(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
-    if update.effective_chat.type != "private":
+    if update.effective_chat.type == "private":
+        if chat_id not in data["users"]:
+            data["users"].append(chat_id)
+            save_data(data)
+    else:
         if chat_id not in data["groups"]:
             data["groups"].append(chat_id)
             save_data(data)
@@ -57,7 +60,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = " ".join(context.args)
     if not msg:
-        await update.message.reply_text("Use: /broadcast message")
+        await update.message.reply_text("Use /broadcast message")
         return
 
     targets = data["groups"] + data["users"]
@@ -71,22 +74,55 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Broadcast Done ✅")
 
 # =========================
-# CHANNEL POSTING (NEW)
+# GROUP CONTROL
 # =========================
-async def post_channel(context: ContextTypes.DEFAULT_TYPE, text: str):
-    try:
-        await context.bot.send_message(CHANNEL_ID, text)
-    except:
-        pass
+async def addgroup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    cid = update.effective_chat.id
+    if cid not in data["groups"]:
+        data["groups"].append(cid)
+        save_data(data)
+
+    await update.message.reply_text("Group Added ✅")
+
+async def removegroup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    cid = update.effective_chat.id
+    if cid in data["groups"]:
+        data["groups"].remove(cid)
+        save_data(data)
+
+    await update.message.reply_text("Group Removed ❌")
 
 # =========================
-# MESSAGE CYCLE + CHANNEL POST
+# ADMIN PANEL
+# =========================
+async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    keyboard = [
+        ["📢 /broadcast"],
+        ["➕ /addgroup", "➖ /removegroup"]
+    ]
+
+    await update.message.reply_text(
+        "⚙ Admin Panel",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    )
+
+# =========================
+# MESSAGE CYCLE (ALL GROUPS)
 # =========================
 async def cycle(app):
     msgs = [
-        "🔥 Update 1 (5 min cycle)",
-        "⚡ Update 2 (3 min cycle)",
-        "🚀 Update 3 (2 min cycle)"
+        "🔥 5 min update active",
+        "⚡ 3 min update active",
+        "🚀 2 min update active"
     ]
     delays = [300, 180, 120]
 
@@ -94,60 +130,46 @@ async def cycle(app):
     while True:
         text = msgs[i]
 
-        # groups + channel posting
         for g in data["groups"]:
             try:
                 await app.bot.send_message(g, text)
             except:
                 pass
 
-        await post_channel(app, "📢 CHANNEL UPDATE: " + text)
-
         i = (i + 1) % 3
         await asyncio.sleep(delays[i])
 
 # =========================
-# COMMANDS
+# START
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id == ADMIN_ID:
         await update.message.reply_text("Bot Started 🚀")
 
-async def addgroup(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    cid = update.effective_chat.id
-    if cid not in data["groups"]:
-        data["groups"].append(cid)
-        save_data(data)
-    await update.message.reply_text("Group Added ✅")
-
-async def removegroup(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    cid = update.effective_chat.id
-    if cid in data["groups"]:
-        data["groups"].remove(cid)
-        save_data(data)
-    await update.message.reply_text("Group Removed ❌")
-
 # =========================
-# MAIN
+# MAIN (AUTO RESTART)
 # =========================
 async def main():
-    app = Application.builder().token(BOT_TOKEN).build()
+    while True:
+        try:
+            app = Application.builder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("broadcast", broadcast))
-    app.add_handler(CommandHandler("addgroup", addgroup))
-    app.add_handler(CommandHandler("removegroup", removegroup))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, auto_reply))
+            app.add_handler(CommandHandler("start", start))
+            app.add_handler(CommandHandler("panel", panel))
+            app.add_handler(CommandHandler("broadcast", broadcast))
+            app.add_handler(CommandHandler("addgroup", addgroup))
+            app.add_handler(CommandHandler("removegroup", removegroup))
+            app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, auto_reply))
 
-    asyncio.create_task(cycle(app))
+            asyncio.create_task(cycle(app))
 
-    print("Bot Running...")
-    await app.run_polling()
+            print("Bot Running...")
+            await app.run_polling()
 
-# FIXED ENTRY POINT
+        except Exception as e:
+            print("Restarting bot...", e)
+            await asyncio.sleep(5)
+
+# FIX ENTRY POINT
 if __name__ == "__main__":
     asyncio.run(main())
